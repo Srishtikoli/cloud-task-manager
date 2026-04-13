@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Cloud Task Manager</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+  <div class="bg-grid"></div>
+
+  <div class="app-container">
+
+    <header class="app-header">
+      <div class="header-left">
+        <span class="logo-mark">✦</span>
+        <div>
+          <h1 class="app-title">TaskCloud</h1>
+          <p class="app-sub">Your tasks, anywhere.</p>
+        </div>
+      </div>
+      <div class="status-pill" id="statusPill">
+        <span class="status-dot"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </header>
+
+    <div class="input-section">
+      <div class="input-row">
+        <input
+          type="text"
+          id="taskInput"
+          class="task-input"
+          placeholder="What needs to be done?"
+          maxlength="120"
+        />
+        <button class="add-btn" id="addBtn" onclick="addTask()">
+          <span>Add</span>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="filters">
+      <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
+      <button class="filter-btn" onclick="setFilter('active', this)">Active</button>
+      <button class="filter-btn" onclick="setFilter('completed', this)">Completed</button>
+    </div>
+
+    <div class="task-list" id="taskList">
+      <div class="empty-state" id="emptyState">
+        <span class="empty-icon">◎</span>
+        <p>No tasks yet. Add one above.</p>
+      </div>
+    </div>
+
+    <footer class="app-footer">
+      <span id="taskCount">0 tasks</span>
+      <button class="clear-btn" onclick="clearCompleted()">Clear completed</button>
+    </footer>
+
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getFirestore, collection, addDoc, getDocs,
+      updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp, query, orderBy
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    
+    const firebaseConfig = {
+      apiKey: "AIzaSyD7Fs8_hvN3zjMRsCuDJ37kP1n1cgQx8Qg",
+      authDomain: "cloud-task-manager-39e5f.firebaseapp.com",
+      projectId: "cloud-task-manager-39e5f",
+      storageBucket: "cloud-task-manager-39e5f.firebasestorage.app",
+      messagingSenderId: "715336393686",
+      appId: "1:715336393686:web:14566efb34fb9938f4ba77"
+    };
+   
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const tasksRef = collection(db, "tasks");
+
+    let currentFilter = 'all';
+    let allTasks = [];
+
+    // Update connection status
+    function setStatus(connected) {
+      const pill = document.getElementById('statusPill');
+      const text = document.getElementById('statusText');
+      pill.className = 'status-pill ' + (connected ? 'online' : 'offline');
+      text.textContent = connected ? 'Connected' : 'Offline';
+    }
+
+
+    window.addTask = async function () {
+      const input = document.getElementById('taskInput');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      try {
+        await addDoc(tasksRef, {
+          text: text,
+          completed: false,
+          createdAt: serverTimestamp()
+        });
+        setStatus(true);
+      } catch (e) {
+        setStatus(false);
+        console.error("Error adding task:", e);
+      }
+    };
+
+    const q = query(tasksRef, orderBy("createdAt", "desc"));
+    onSnapshot(q, (snapshot) => {
+      allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setStatus(true);
+      renderTasks();
+    }, (error) => {
+      setStatus(false);
+      console.error("Snapshot error:", error);
+    });
+
+  
+    window.toggleTask = async function (id, current) {
+      try {
+        await updateDoc(doc(db, "tasks", id), { completed: !current });
+      } catch (e) { console.error("Error updating task:", e); }
+    };
+
+    window.startEdit = function (id, currentText) {
+      const taskEl = document.getElementById('task-' + id);
+      const textEl = taskEl.querySelector('.task-text');
+      textEl.innerHTML = `<input class="edit-input" value="${currentText}" id="edit-${id}" onblur="saveEdit('${id}')" onkeydown="if(event.key==='Enter') saveEdit('${id}')"/>`;
+      document.getElementById('edit-' + id).focus();
+    };
+
+    window.saveEdit = async function (id) {
+      const input = document.getElementById('edit-' + id);
+      if (!input) return;
+      const newText = input.value.trim();
+      if (!newText) return;
+      try {
+        await updateDoc(doc(db, "tasks", id), { text: newText });
+      } catch (e) { console.error("Error editing task:", e); }
+    };
+
+
+    window.deleteTask = async function (id) {
+      try {
+        await deleteDoc(doc(db, "tasks", id));
+      } catch (e) { console.error("Error deleting task:", e); }
+    };
+
+    window.clearCompleted = async function () {
+      const completed = allTasks.filter(t => t.completed);
+      for (const task of completed) {
+        await deleteDoc(doc(db, "tasks", task.id));
+      }
+    };
+
+    
+    window.setFilter = function (filter, btn) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderTasks();
+    };
+
+    function renderTasks() {
+      const list = document.getElementById('taskList');
+      const empty = document.getElementById('emptyState');
+      const count = document.getElementById('taskCount');
+
+      const filtered = allTasks.filter(t => {
+        if (currentFilter === 'active') return !t.completed;
+        if (currentFilter === 'completed') return t.completed;
+        return true;
+      });
+
+      const active = allTasks.filter(t => !t.completed).length;
+      count.textContent = `${active} task${active !== 1 ? 's' : ''} remaining`;
+
+      if (filtered.length === 0) {
+        empty.style.display = 'flex';
+        const existing = list.querySelectorAll('.task-item');
+        existing.forEach(e => e.remove());
+        return;
+      }
+
+      empty.style.display = 'none';
+
+      const existingIds = new Set([...list.querySelectorAll('.task-item')].map(el => el.id.replace('task-', '')));
+      const newIds = new Set(filtered.map(t => t.id));
+
+      // Remove tasks no longer in filtered
+      existingIds.forEach(id => {
+        if (!newIds.has(id)) {
+          const el = document.getElementById('task-' + id);
+          if (el) el.remove();
+        }
+      });
+
+      // Add or update tasks
+      filtered.forEach((task, index) => {
+        let el = document.getElementById('task-' + task.id);
+        if (!el) {
+          el = document.createElement('div');
+          el.className = 'task-item';
+          el.id = 'task-' + task.id;
+          list.appendChild(el);
+        }
+        el.className = 'task-item' + (task.completed ? ' done' : '');
+        el.style.animationDelay = `${index * 40}ms`;
+        el.innerHTML = `
+          <button class="check-btn ${task.completed ? 'checked' : ''}" onclick="toggleTask('${task.id}', ${task.completed})">
+            ${task.completed ? '✓' : ''}
+          </button>
+          <span class="task-text" ondblclick="startEdit('${task.id}', \`${task.text.replace(/`/g, "'")}\`)">${task.text}</span>
+          <div class="task-actions">
+            <button class="action-btn edit-btn" onclick="startEdit('${task.id}', \`${task.text.replace(/`/g, "'")}\`)" title="Edit">✎</button>
+            <button class="action-btn del-btn" onclick="deleteTask('${task.id}')" title="Delete">✕</button>
+          </div>
+        `;
+      });
+    }
+
+    // Enter key to add task
+    document.getElementById('taskInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') window.addTask();
+    });
+
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>
